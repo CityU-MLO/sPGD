@@ -1,5 +1,6 @@
 # Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations
 
+Codes for paper [Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations](https://arxiv.org/abs/2405.05075).
 
 ## Requirements
 
