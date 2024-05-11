@@ -1,6 +1,10 @@
 # Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations
 
-Codes for paper [Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations](https://arxiv.org/abs/2405.05075).
+This is the code repository for paper [Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations](https://arxiv.org/abs/2405.05075), ICML 2024.
+
+## Abstract
+
+This work studies sparse adversarial perturbations bounded by $l_0$ norm. We propose a white-box PGD-like attack method named sparse-PGD to effectively and efficiently generate such perturbations. Furthermore, we combine sparse-PGD with a black-box attack to comprehensively and more reliably evaluate the models' robustness against $l_0$ bounded adversarial perturbations. Moreover, the efficiency of sparse-PGD enables us to conduct adversarial training to build robust models against sparse perturbations. Extensive experiments demonstrate that our proposed attack algorithm exhibits strong performance in different scenarios. More importantly, compared with other robust models, our adversarially trained model demonstrates state-of-the-art robustness against various sparse attacks.
 
 ## Requirements
 
@@ -79,3 +83,17 @@ The checkpoint files of the models traiend with the proposed method are availabl
 Parts of codes are based on [DengpanFu/RobustAdversarialNetwork: A pytorch re-implementation for paper "Towards Deep Learning Models Resistant to Adversarial Attacks" (github.com)](https://github.com/DengpanFu/RobustAdversarialNetwork)
 
 Codes of Sparse-RS are from [fra31/sparse-rs: Sparse-RS: a versatile framework for query-efficient sparse black-box adversarial attacks (github.com)](https://github.com/fra31/sparse-rs)
+
+## Bibliography
+
+If you find this repository helpful for your project, please consider citing:
+```
+@inproceedings{
+	zhong2024towards,
+	title={Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations},
+	author={Xuyang Zhong and Yixiao Huang and Chen Liu},
+	booktitle={International Conference on Machine Learning},
+	year={2024},
+	organization={PMLR}
+}
+```
