@@ -76,20 +76,21 @@ class GTSRB(torch.utils.data.Dataset):
         return len(self.samples)
 
 
-def load_gtsrb(root, batch_size, test_batch_size, num_workers, pin_memory=False, shuffle=True, eval_samples=-1, out_index=False):
+def load_gtsrb(root, batch_size, test_batch_size, num_workers, pin_memory=False, shuffle=True, eval_samples=-1, img_size=224):
+    assert img_size in [224, 32]
     transform_train = transforms.Compose([
-        transforms.Resize(256),
-        transforms.RandomCrop(224, padding=16),
+        transforms.Resize(256 if img_size == 224 else 36),
+        transforms.RandomCrop(img_size, padding=16 if img_size == 224 else 2),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor()])
 
     transform_test = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize(256 if img_size == 224 else 36),
+        transforms.CenterCrop(img_size),
         transforms.ToTensor()])
 
-    dataset_train = GTSRB(root, transform=transform_train, train=True, out_index=out_index)
-    dataset_test = GTSRB(root, transform=transform_test, train=False, out_index=out_index)
+    dataset_train = GTSRB(root, transform=transform_train, train=True, out_index=True)
+    dataset_test = GTSRB(root, transform=transform_test, train=False, out_index=True)
 
     if eval_samples != -1 and eval_samples < len(dataset_test):
         dataset_test = torch.utils.data.Subset(dataset_test, np.arange(eval_samples))
@@ -98,4 +99,4 @@ def load_gtsrb(root, batch_size, test_batch_size, num_workers, pin_memory=False,
                                                num_workers=num_workers, pin_memory=pin_memory)
     loader_test = torch.utils.data.DataLoader(dataset_test, batch_size=test_batch_size, shuffle=False,
                                               num_workers=num_workers, pin_memory=pin_memory)
-    return loader_train, loader_test, len(dataset_train.classes), 224, dataset_train, dataset_test
+    return loader_train, loader_test, len(dataset_train.classes), img_size, dataset_train, dataset_test

@@ -9,14 +9,13 @@ from time import gmtime, strftime
 from torch.backends import cudnn
 from tensorboardX import SummaryWriter
 
-sys.path.insert(1, "./")
 from Logging import Logger
 from config import cfg
 from model import create_model, Normalize
-from trainer import Trainer
+from trainer import Trainer, TrainerSAT
 from evaluator import Evaluator
 from utils import *
-from spgd import SparsePGD
+from spgd import SparsePGD, FastSparsePGD
 
 
 if __name__ == '__main__':
@@ -52,17 +51,26 @@ if __name__ == '__main__':
         num_workers=4)
 
     model = create_model(name=cfg.model_name, num_classes=num_classes)
-
-    # model = nn.Sequential(Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010], device='cuda'),
-    #                       model)
-
     optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, weight_decay=5e-4, momentum=0.9)
+
+    start_epoch = 0
+    if cfg.resume:
+        ckpt = torch.load(cfg.resume)
+        start_epoch = ckpt['epoch']
+        model.load_state_dict(ckpt['state_dict'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        if torch.cuda.is_available():
+            for k, v in optimizer.state.items():
+                if 'momentum_buffer' not in v:
+                    continue
+                optimizer.state[k]['momentum_buffer'] = optimizer.state[k]['momentum_buffer'].cuda()
+        print('Resume from epoch {}'.format(start_epoch))
 
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones=[
             cfg.max_epoch * len(train_loader) // 4,
             3 * cfg.max_epoch * len(train_loader) // 4,
-        ], gamma=0.1)
+        ], gamma=0.1, last_epoch=start_epoch - 1)
 
     is_cuda = False
     if torch.cuda.device_count() > 1:
@@ -71,21 +79,34 @@ if __name__ == '__main__':
         model = model.cuda()
         is_cuda = True
 
-    attack = SparsePGD(model, epsilon=cfg.epsilon, k=cfg.k, t=cfg.n_iters, alpha=cfg.alpha, beta=cfg.beta, patience=cfg.patience,
-                       unprojected_gradient=True if cfg.train_mode == 'unproj' else False)
-    # attack_eval = SparsePGD(model, epsilon=cfg.epsilon, k=cfg.k, t=cfg.n_iters, alpha=0.25, beta=0.25,
-    #                    unprojected_gradient= True if cfg.train_mode=='unproj' else False)
+    if cfg.n_iters > 1:
+        attack = SparsePGD(model, epsilon=cfg.epsilon, k=cfg.k, t=cfg.n_iters, alpha=cfg.alpha, beta=cfg.beta,
+                           nfgsm=cfg.nfgsm, patience=10)
+    else:
+        attack = FastSparsePGD(model, epsilon=cfg.epsilon, k=cfg.k, t=cfg.n_iters, alpha=cfg.alpha, beta=cfg.beta,
+                               nfgsm=cfg.nfgsm,
+                               loss=cfg.attack_loss)
+    # attack_eval = SparsePGD(model, epsilon=cfg.epsilon, k=cfg.k, t=cfg.n_iters, alpha=cfg.alpha, beta=cfg.beta)
 
-    trainer = Trainer(model=model, attack=attack, optimizer=optimizer,
-                      summary_writer=summary_writer, is_cuda=True,
-                      output_freq=cfg.output_freq, print_freq=cfg.print_freq,
-                      base_lr=cfg.lr, max_epoch=cfg.max_epoch,
-                      steps=cfg.steps, rate=cfg.decay_rate, loss=cfg.train_loss, trades_beta=cfg.trades_beta,
-                      scheduler=scheduler, mode=cfg.train_mode)
+    if cfg.sat:
+        trainer = TrainerSAT(model=model, attack=attack, optimizer=optimizer,
+                         summary_writer=summary_writer, is_cuda=True,
+                         output_freq=cfg.output_freq, print_freq=cfg.print_freq,
+                         base_lr=cfg.lr, max_epoch=cfg.max_epoch,
+                         steps=cfg.steps, rate=cfg.decay_rate, loss=cfg.train_loss, trades_beta=cfg.trades_beta,
+                         scheduler=scheduler, sat_epoch=int(cfg.max_epoch * cfg.sat_epoch))
+    else:
+        trainer = Trainer(model=model, attack=attack, optimizer=optimizer,
+                             summary_writer=summary_writer, is_cuda=True,
+                             output_freq=cfg.output_freq, print_freq=cfg.print_freq,
+                             base_lr=cfg.lr, max_epoch=cfg.max_epoch,
+                             steps=cfg.steps, rate=cfg.decay_rate, loss=cfg.train_loss, trades_beta=cfg.trades_beta,
+                             scheduler=scheduler)
+    trainer.ready_data(train_set, num_classes)
     # evaluator = Evaluator(model=model, attack=attack_eval, is_cuda=is_cuda, verbose=True)
 
     trainer.reset()
-    for epoch in range(cfg.max_epoch):
+    for epoch in range(start_epoch, cfg.max_epoch):
         if cfg.train_mode == 'alter':
             if (epoch+1) % 5 == 0:
                 attack.change_masking()

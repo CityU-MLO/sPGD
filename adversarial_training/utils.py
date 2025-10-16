@@ -39,17 +39,21 @@ class TensorDataset(Dataset):
         return self.images.shape[0]
 
 
-def get_data_loader(cfg, data_name='mnist', data_dir='data/mnist', batch_size=128,
+class IndexDataset(Dataset):
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __getitem__(self, index):
+        x, y = self.dataset[index]
+        return x, y, index
+
+    def __len__(self):
+        return len(self.dataset)
+
+
+def get_data_loader(cfg, data_name='cifar10', data_dir='data/', batch_size=128,
                     test_batch_size=200, num_workers=4, eval_samples=-1):
-    if data_name == 'mnist':
-        transform_train = T.Compose([T.ToTensor()])
-        transform_test = T.Compose([T.ToTensor()])
-        train_set = D.MNIST(root=data_dir, train=True, download=True,
-                            transform=transform_train)
-        test_set = D.MNIST(root=data_dir, train=False, download=True,
-                           transform=transform_test)
-        img_size, num_class = 28, 10
-    elif data_name == 'cifar10':
+    if data_name == 'cifar10':
         transform_train = T.Compose([T.RandomCrop(32, padding=4),
                                      T.RandomHorizontalFlip(),
                                      T.ToTensor()
@@ -61,7 +65,9 @@ def get_data_loader(cfg, data_name='mnist', data_dir='data/mnist', batch_size=12
                               transform=transform_train)
         test_set = D.CIFAR10(root=data_dir, train=False, download=True,
                              transform=transform_test)
-        img_size, num_class = 32, 10
+        train_set = IndexDataset(train_set)
+        test_set = IndexDataset(test_set)
+        img_size, num_classes = 32, 10
     elif data_name == 'cifar100':
         transform_train = T.Compose([T.RandomCrop(32, padding=4),
                                      T.RandomHorizontalFlip(),
@@ -74,7 +80,9 @@ def get_data_loader(cfg, data_name='mnist', data_dir='data/mnist', batch_size=12
                               transform=transform_train)
         test_set = D.CIFAR100(root=data_dir, train=False, download=True,
                              transform=transform_test)
-        img_size, num_class = 32, 100
+        train_set = IndexDataset(train_set)
+        test_set = IndexDataset(test_set)
+        img_size, num_classes = 32, 100
     elif data_name == 'stl10':
         transform_train = T.Compose([T.RandomCrop(96, padding=4),
                                      T.RandomHorizontalFlip(),
@@ -84,27 +92,20 @@ def get_data_loader(cfg, data_name='mnist', data_dir='data/mnist', batch_size=12
                             transform=transform_train)
         test_set = D.STL10(root=data_dir, split='test', download=True,
                            transform=transform_test)
-        img_size, num_class = 96, 10
-    elif data_name == 'imagenet-sub':
-        transform_train = T.Compose([
-            T.RandomResizedCrop(64, scale=(0.8, 0.9), ratio=(1.0, 1.0)),
-            T.RandomHorizontalFlip(),
-            T.ToTensor(), ])
-        transform_test = T.Compose([T.Resize(64), T.ToTensor()])
-        train_set = D.ImageFolder(root=os.path.join(data_dir, 'train'), transform=transform_train)
-        test_set = D.ImageFolder(root=os.path.join(data_dir, 'val'), transform=transform_test)
-        img_size, num_class = 64, 143
+        img_size, num_classes = 96, 10
     elif data_name == 'imagenet100':
         train_loader, valid_loader, test_loader, num_classes = imagenet100(data_dir=data_dir, batch_size=batch_size)
         img_size, num_class = 224, 100
         return train_loader, test_loader, num_class, img_size, train_loader.dataset, test_loader.dataset
     elif data_name == 'gtsrb':
         train_loader, test_loader, num_classes, img_size, train_set, test_set = load_gtsrb(
-            data_dir, batch_size, test_batch_size=cfg.eval_batch_size, eval_samples=cfg.eval_samples, num_workers=4)
-        return train_loader, test_loader, num_classes, img_size, train_set, test_set
+            cfg.data_dir, cfg.batch_size,
+            test_batch_size=cfg.eval_batch_size,
+            eval_samples=cfg.eval_samples,
+            num_workers=4, img_size=32)
     else:
         raise ValueError('invalid dataset, current only support {}'.format(
-            "mnist, cifar10, stl10, imagenet-sub"))
+            "mnist, cifar10, stl10, imagenet-sub", "gtsrb"))
 
     if eval_samples != -1 and eval_samples < len(test_set):
         test_set = torch.utils.data.Subset(test_set, np.arange(eval_samples))
@@ -112,7 +113,7 @@ def get_data_loader(cfg, data_name='mnist', data_dir='data/mnist', batch_size=12
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     test_loader = DataLoader(test_set, batch_size=test_batch_size, shuffle=False, num_workers=num_workers)
 
-    return train_loader, test_loader, num_class, img_size, train_set, test_set
+    return train_loader, test_loader, num_classes, img_size, train_set, test_set
 
 
 class AverageMeter(object):

@@ -1,27 +1,6 @@
 import torch
 from torch.nn import functional as F
 import numpy as np
-from skimage.util import random_noise
-
-
-def dlr_loss_targeted(x, y, y_target):
-    x_sorted, ind_sorted = x.sort(dim=1)
-    u = torch.arange(x.shape[0])
-
-    # return -(x[u, y] - x[u, y_target]) / (x_sorted[:, -1] - .5 * (
-    #         x_sorted[:, -3] + x_sorted[:, -4]) + 1e-12)
-    return -(x[u, y] - x[u, y_target])
-
-
-def dlr_loss(x, y):
-    x_sorted, ind_sorted = x.sort(dim=1)
-    ind = (ind_sorted[:, -1] == y).float()
-    u = torch.arange(x.shape[0])
-
-    # return -(x[u, y] - x_sorted[:, -2] * ind - x_sorted[:, -1] * (
-    #         1. - ind)) / (x_sorted[:, -1] - x_sorted[:, -3] + 1e-12)
-    return -(x[u, y] - x_sorted[:, -2] * ind - x_sorted[:, -1] * (1. - ind))
-
 
 def margin_loss(logits, x, y, targeted=False):
     """
@@ -44,7 +23,6 @@ class MaskingA(torch.autograd.Function):
         b, c, h, w = x.shape
         # project x onto L0 ball
         mask_proj = mask.clone().view(b, -1)
-        # keep k largest elements of mask and set the rest to 0
         _, idx = torch.sort(mask_proj, dim=1, descending=True)
         mask_proj = torch.zeros_like(mask_proj).scatter_(1, idx[:, :k], 1).view(b, 1, h, w)
 
@@ -65,6 +43,7 @@ class MaskingB(torch.autograd.Function):
         mask_proj = mask.clone().view(b, -1)
         _, idx = torch.sort(mask_proj, dim=1, descending=True)
         # keep k largest elements of mask and set the rest to 0
+        # mask_back = mask.clone().view(b, -1).scatter_(1, idx[:, k:], 0).view(b, 1, h, w)
         mask_proj = torch.zeros_like(mask_proj).scatter_(1, idx[:, :k], 1).view(b, 1, h, w)
 
         ctx.save_for_backward(x, mask_proj)
@@ -78,7 +57,7 @@ class MaskingB(torch.autograd.Function):
 
 class SparsePGD(object):
     def __init__(self, model, epsilon=255 / 255, k=10, t=30, random_start=True, patience=3, classes=10, alpha=0.25,
-                 beta=0.25, unprojected_gradient=True, verbose=False):
+                 beta=0.25, unprojected_gradient=True, verbose=False, nfgsm=False, loss='ce'):
         self.model = model
         self.epsilon = epsilon
         self.k = k
@@ -93,6 +72,8 @@ class SparsePGD(object):
         self.p_init = 1.0
         self.verbose = verbose
         self.verbose_interval = 100
+        self.nfgsm = nfgsm
+        self.loss = loss
 
     def initial_perturb(self, x, seed=-1):
         if self.random_start:
@@ -104,15 +85,18 @@ class SparsePGD(object):
         perturb = torch.min(torch.max(perturb, -x), 1 - x)
         return perturb
 
-    def update_perturbation(self, perturb, grad, x):
+    def update_perturbation(self, perturb, grad, x, low_conf_idx=None):
         b, c, h, w = perturb.size()
         step_size = self.alpha * torch.ones(b, device=perturb.device)
+        if low_conf_idx is not None:
+            step_size[low_conf_idx] = 0.1 * step_size[low_conf_idx]
         perturb1 = perturb + step_size.view(b, 1, 1, 1) * grad.sign()
+        # perturb1 = perturb + self.alpha * grad.sign()
         perturb1 = perturb1.clamp_(-self.epsilon, self.epsilon)
         perturb1 = torch.min(torch.max(perturb1, -x), 1 - x)
         return perturb1
 
-    def update_mask(self, mask, grad):
+    def update_mask(self, mask, grad, low_conf_idx=None):
         # prev_mask = self.project_mask(mask.clone())
         if mask.dim() == 3:
             mask = mask.unsqueeze(0)
@@ -122,6 +106,9 @@ class SparsePGD(object):
 
         step_size = np.sqrt(h * w * c) * self.beta * torch.ones(b, device=mask.device)
         step_size = step_size.scatter_(0, (grad_norm.view(-1) < 2e-10).nonzero().squeeze(), 0)
+        if low_conf_idx is not None:
+            step_size = step_size.scatter_(0, low_conf_idx, 0.1*np.sqrt(h * w * c) * self.beta)
+            pass
         mask = mask + step_size.view(b, 1, 1, 1) * d
 
         return mask
@@ -134,6 +121,7 @@ class SparsePGD(object):
         b, c, h, w = x.size()
 
         mask = torch.randn(b, 1, h, w).to(x.device)
+        # mask = torch.distributions.Laplace(loc=0., scale=1.).sample((b, 1, h, w)).to(x.device)
 
         if prev_mask is not None:
             prev_mask = prev_mask.view(b, -1)
@@ -151,14 +139,16 @@ class SparsePGD(object):
 
         return mask
 
-    def project_mask(self, mask):
+    def project_mask(self, mask, k=None):
         if mask.dim() == 3:
             mask = mask.unsqueeze(0)
         b, c, h, w = mask.size()
         mask_proj = mask.clone().view(b, -1)
         _, idx = torch.sort(mask_proj, dim=1, descending=True)
         # keep k largest elements of mask and set the rest to 0
-        mask_proj = torch.zeros_like(mask_proj).scatter_(1, idx[:, :self.k], 1).view(b, c, h, w)
+        if k is None:
+            k = self.k
+        mask_proj = torch.zeros_like(mask_proj).scatter_(1, idx[:, :k], 1).view(b, c, h, w)
         return mask_proj
 
     def check_shape(self, x):
@@ -176,15 +166,19 @@ class SparsePGD(object):
     def __call__(self, x, y, seed=-1, targeted=False, target=None):
         b, c, h, w = x.size()
         it = torch.zeros(b, dtype=torch.long, device=x.device)
+        
+        # N-FGSM: add noise to the input
+        if self.nfgsm:
+            perturb_aug = x.new(x.size()).uniform_(-self.epsilon, self.epsilon)
+            perturb_aug = torch.min(torch.max(perturb_aug, -x), 1 - x)
+            mask_aug = self.project_mask(torch.randn(b, 1, h, w).to(x.device), np.random.randint(2 * self.k + 1))
+            x = x + mask_aug * perturb_aug
 
         # generate initial perturbation
         perturb = self.initial_perturb(x, seed)
 
         # generate initial mask
         mask = self.initial_mask(x)
-
-        mask_best = mask.clone()
-        perturb_best = perturb.clone()
 
         training = self.model.training
         if training:
@@ -195,30 +189,30 @@ class SparsePGD(object):
         x_adv_best = x.clone()
 
         # remove misclassified examples
-        with torch.no_grad():
-            logits = self.model(x)
-            loss_best = F.cross_entropy(logits, y, reduction='none')
-        clean_acc = (logits.argmax(dim=1) == y).float()
-        ind_fail = (clean_acc == 1).nonzero().squeeze()
-        if self.t == 0:
-            return x, clean_acc, it
-        if ind_fail.numel() == 0:
-            ind_fail = torch.arange(b, device=x.device)
-
-        x = self.check_shape(x[ind_fail])
-        perturb = self.check_shape(perturb[ind_fail])
-        mask = self.check_shape(mask[ind_fail])
-        y = y[ind_fail]
-        ind_all = ind_all[ind_fail]
-        reinitial_count = reinitial_count[ind_fail]
-        if target is not None:
-            target = target[ind_fail]
-        if ind_fail.numel() == 1:
-            y.unsqueeze_(0)
-            ind_all.unsqueeze_(0)
-            reinitial_count.unsqueeze_(0)
-            if target is not None:
-                target.unsqueeze_(0)
+        # with torch.no_grad():
+        #     logits = self.model(x)
+        #     loss_best = F.cross_entropy(logits, y, reduction='none')
+        # clean_acc = (logits.argmax(dim=1) == y.argmax(dim=1)).float() if y.dim() > 1 else (logits.argmax(dim=1) == y).float()
+        # ind_fail = (clean_acc == 1).nonzero().squeeze()
+        # if self.t == 0 or clean_acc.sum() == 0:
+        #     return x, clean_acc, it
+        # if ind_fail.numel() == 0:
+        #     ind_fail = torch.arange(b, device=x.device)
+        #
+        # x = self.check_shape(x[ind_fail])
+        # perturb = self.check_shape(perturb[ind_fail])
+        # mask = self.check_shape(mask[ind_fail])
+        # y = y[ind_fail]
+        # ind_all = ind_all[ind_fail]
+        # reinitial_count = reinitial_count[ind_fail]
+        # if target is not None:
+        #     target = target[ind_fail]
+        # if ind_fail.numel() == 1:
+        #     y.unsqueeze_(0)
+        #     ind_all.unsqueeze_(0)
+        #     reinitial_count.unsqueeze_(0)
+        #     if target is not None:
+        #         target.unsqueeze_(0)
 
         if self.verbose:
             acc_list = []
@@ -236,9 +230,13 @@ class SparsePGD(object):
                 torch.max(x + proj_perturb).item())
         logits = self.model(x + proj_perturb)
 
-        loss = F.cross_entropy(logits, y, reduction='none')
+        if self.loss == 'trades':
+            loss = F.kl_div(F.log_softmax(logits, dim=1), F.softmax(self.model(x), dim=1), reduction='none')
+        else:
+            loss = F.cross_entropy(logits, y, reduction='none')
 
-        loss.sum().backward()
+        loss.mean().backward()
+        loss_best = loss.detach().clone()
         grad_perturb = perturb.grad.clone()
         grad_mask = mask.grad.clone()
 
@@ -267,11 +265,13 @@ class SparsePGD(object):
                     torch.max(x + proj_perturb).item())
             logits = self.model(x + proj_perturb)
 
-            # adaptive loss, calculate DLR loss for examples with low confidence, and use CE loss for the rest
-            loss = F.cross_entropy(logits, y, reduction='none')
+            if self.loss == 'trades':
+                loss = F.kl_div(F.log_softmax(logits, dim=1), F.softmax(self.model(x), dim=1), reduction='none')
+            else:
+                loss = F.cross_entropy(logits, y, reduction='none')
 
             # backward pass
-            loss.sum().backward()
+            loss.mean().backward()
             grad_perturb = perturb.grad.clone()
             grad_mask = mask.grad.clone()
 
@@ -279,7 +279,7 @@ class SparsePGD(object):
 
             with torch.no_grad():
                 fool_label = logits.argmax(dim=1)
-                acc = (fool_label == y).float()
+                acc = (fool_label == y.argmax(dim=1)).float() if y.dim() > 1 else (fool_label == y).float()
 
                 # save the best adversarial example
                 loss = loss.detach()
@@ -332,8 +332,10 @@ class SparsePGD(object):
 
             if self.verbose and (i+1) % self.verbose_interval == 0:
                 acc_list.append(acc.sum().item())
+
             if torch.sum(acc) == 0.:
                 break
+
         if training:
             self.model.train()
         if self.verbose:
@@ -343,6 +345,8 @@ class SparsePGD(object):
         return x_adv_best, acc, it
 
     def perturb(self, x, y):
+        if self.t == 0:
+            return x, None, None
         if self.verbose:
             x_adv, acc, it, acc_list = self.__call__(x, y, targeted=False)
             return x_adv, acc.sum(), it, acc_list
@@ -354,3 +358,68 @@ class SparsePGD(object):
             self.masking = MaskingB()
         else:
             self.masking = MaskingA()
+
+
+class FastSparsePGD(SparsePGD):
+    def __init__(self, model, epsilon=255 / 255, k=10, t=30, random_start=True, patience=3, classes=10, alpha=1.0,
+                 beta=1.0, unprojected_gradient=True, verbose=False, nfgsm=False, loss='ce'):
+        super(FastSparsePGD, self).__init__(model, epsilon, k, t, random_start, patience, classes, alpha, beta,
+                                            unprojected_gradient, verbose, nfgsm=nfgsm, loss=loss)
+
+    def __call__(self, x, y, seed=-1, targeted=False, target=None, perturb=None, mask=None):
+        b, c, h, w = x.size()
+        # N-FGSM: add noise to the input
+        if self.nfgsm:
+            perturb_aug = x.new(x.size()).uniform_(-self.epsilon, self.epsilon)
+            perturb_aug = torch.min(torch.max(perturb_aug, -x), 1 - x)
+            mask_aug = self.project_mask(torch.randn(b, 1, h, w).to(x.device), np.random.randint(2 * self.k + 1))
+            x = x + mask_aug * perturb_aug
+
+        # generate initial perturbation
+        if perturb is None:
+            perturb = self.initial_perturb(x, seed)
+        # generate initial mask
+        if mask is None:
+            mask = self.initial_mask(x)
+
+        training = self.model.training
+        if training:
+            self.model.eval()
+
+        for i in range(self.t):
+            perturb.requires_grad_()
+            mask.requires_grad_()
+            proj_perturb = self.masking.apply(perturb, F.sigmoid(mask), self.k)
+            with torch.no_grad():
+                assert torch.norm(proj_perturb.sum(1), p=0, dim=(1, 2)).max().item() <= self.k, 'projection error'
+                assert torch.max(x + proj_perturb).item() <= 1.0 and torch.min(
+                    x + proj_perturb).item() >= 0.0, 'perturbation exceeds bound, min={}, max={}'.format(
+                    torch.min(x + proj_perturb).item(),
+                    torch.max(x + proj_perturb).item())
+            logits = self.model(x + proj_perturb)
+
+            if self.loss == 'trades':
+                loss = F.kl_div(F.log_softmax(logits, dim=1), F.softmax(self.model(x), dim=1), reduction='batchmean')
+            else:
+                loss = F.cross_entropy(logits, y, reduction='mean')
+
+            loss.backward()
+            grad_perturb = perturb.grad.clone()
+            grad_mask = mask.grad.clone()
+
+            perturb = perturb.detach()
+            mask = mask.detach()
+            # update mask
+            mask = self.update_mask(mask, grad_mask)
+            # update perturbation using PGD
+            perturb = self.update_perturbation(perturb=perturb, grad=grad_perturb, x=x)
+
+        x_adv = x + self.masking.apply(perturb, F.sigmoid(mask), self.k)
+        if training:
+            self.model.train()
+        return x_adv, perturb, mask
+
+    def perturb(self, x, y, perturb=None, mask=None):
+        x_adv, perturb, mask = self.__call__(x, y, perturb=perturb, mask=mask)
+        return x_adv, perturb, mask
+

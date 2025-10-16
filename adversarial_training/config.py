@@ -64,10 +64,10 @@ def parse_args():
 
     # print and output settings
     parser.add_argument('--print_freq',         dest='print_freq', 
-                        type=int,               default=10, 
+                        type=int,               default=100,
                         help='print freq')
     parser.add_argument('--output_freq',        dest='output_freq', 
-                        type=int,               default=5, 
+                        type=int,               default=100,
                         help='output freq')
     parser.add_argument('--save_freq',          dest='save_freq', 
                         type=int,               default=5,
@@ -90,10 +90,10 @@ def parse_args():
                         type=float,             default=255,
                         help='the maximum allowed perturbation per pixel')
     parser.add_argument('-k',                  dest='k',
-                        type=int,               default=20,
+                        type=int,               default=120,
                         help='sparsity level')
     parser.add_argument('--n_iters', dest='n_iters',
-                        type=int,               default=100,
+                        type=int,               default=20,
                         help='number of iterations')
     parser.add_argument('--alpha',              dest='alpha', 
                         type=float,             default=0.25,
@@ -109,8 +109,15 @@ def parse_args():
                         choices=['adv', 'trades'],
                         help='epoches to decrease learning rate')
     parser.add_argument('--trades_beta', dest='trades_beta',
-                        type=float, default=3,
+                        type=float, default=6,
                         help='scaling factor of robust loss in TRADES')
+    parser.add_argument('--nfgsm', dest='nfgsm', action='store_true',
+                        help='use nfgsm')
+    parser.add_argument('--attack_loss', type=str, default='ce', choices=['ce', 'trades'])
+    parser.add_argument('--sat', action='store_true', help='use SAT')
+    parser.add_argument('--sat_epoch', type=float, default=0.5)
+    parser.add_argument('--resume',             dest='resume',
+                        type=str,               default='')
     args = parser.parse_args()
     return args
 

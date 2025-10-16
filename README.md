@@ -1,10 +1,8 @@
-# Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations
+# Sparse-PGD
 
-This is the code repository for paper [Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations](https://arxiv.org/abs/2405.05075), ICML 2024.
-
-## Abstract
-
-This work studies sparse adversarial perturbations bounded by $l_0$ norm. We propose a white-box PGD-like attack method named sparse-PGD to effectively and efficiently generate such perturbations. Furthermore, we combine sparse-PGD with a black-box attack to comprehensively and more reliably evaluate the models' robustness against $l_0$ bounded adversarial perturbations. Moreover, the efficiency of sparse-PGD enables us to conduct adversarial training to build robust models against sparse perturbations. Extensive experiments demonstrate that our proposed attack algorithm exhibits strong performance in different scenarios. More importantly, compared with other robust models, our adversarially trained model demonstrates state-of-the-art robustness against various sparse attacks.
+This is the code repository for papers
+- Understanding and Improving Fast Adversarial Training against $l_0$ Bounded Perturbations, NeurIPS 2025.
+- [Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations](https://arxiv.org/abs/2405.05075), ICML 2024.
 
 ## Requirements
 
@@ -15,13 +13,14 @@ To execute the code, please make sure that the following packages are installed:
 - [matplotlib](https://matplotlib.org/users/installing.html)
 - [robustbench](https://github.com/RobustBench/robustbench)
 
+## Fast-LS-$l_0$
 
-## Adversarial Training
+This is the implementation of Fast-LS-$l_0$ in "Understanding and Improving Fast Adversarial Training against $l_0$ Bounded Perturbations, NeurIPS 2025."
 
-Run the following command to train PreActResNet18 with sAT or sTRADES:
+Run the following command to train PreActResNet18 on adversarial samples:
 
 ```
-python adversarial_training/train.py --exp_name debug --data_name [DATASET NAME] --data_dir [DATA PATH] --model_name preactresnet --max_epoch 100 --batch_size 128 --lr 0.05 --train_loss [adv, trades] --train_mode rand --patience 10 -k 120 --n_iters 20 --gpu 0 
+python train.py --exp_name debug --data_name [DATASET NAME] --data_dir [DATA PATH] --model_name preactresnet --max_epoch 100 --batch_size 128 --lr 0.05 --train_loss [adv, trades] -k 120 --alpha 1 --beta 1 --n_iters 1 --nfgsm --sat --sat_epoch 0.5 --attack_loss ce --gpu 0 
 ```
 
 - exp_name: experiment name
@@ -32,10 +31,23 @@ python adversarial_training/train.py --exp_name debug --data_name [DATASET NAME]
 - batch_size: batch size
 - lr: initial learning rate
 - train_loss: choose a loss for training from 'adv' (sAT) or 'trades' (sTRADES)
-- k: $l_0$ norm budget
-- n_iters: number of iterations for sPGD
+- k: $l_0$ norm budget. In the experiments, k=120, 60, 1200, 72 for CIFAR-10, CIFAR-100, ImageNet-100 and GTSRB, respectively.
+- alpha, beta: step size for updating magnitude and mask in sPGD
+- n_iters: number of iterations for attack
+- nfgsm: whether enabling N-FGSM
+- sat: whether enabling SAT
+- sat_epoch: the epoch to enable SAT, i.e., sat_epoch*max_epoch
+- attack_loss: 'ce' for sTRADES (T), 'trades' for sTRADES (F)
 - gpu: gpu id
 
+## Adversarial Training
+This is the implementation of adversarial training in "Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations, ICML 2024."
+
+Run the following command to train PreActResNet18 with sAT or sTRADES:
+
+```
+python adversarial_training/train.py --exp_name debug --data_name [DATASET NAME] --data_dir [DATA PATH] --model_name preactresnet --max_epoch 100 --batch_size 128 --lr 0.05 --train_loss [adv, trades] --train_mode rand --patience 10 -k 120 --n_iters 20 --gpu 0 
+```
 
 ## Sparse-AutoAttack (sAA)
 
@@ -87,6 +99,15 @@ Codes of Sparse-RS are from [fra31/sparse-rs: Sparse-RS: a versatile framework f
 ## Bibliography
 
 If you find this repository helpful for your project, please consider citing:
+```
+@article{zhong2025understanding,
+  title={Understanding and Improving Fast Adversarial Training against $l_0$ Bounded Perturbations},
+  author={Xuyang Zhong and Yixiao Huang and Chen Liu},
+  journal={Advances in Neural Information Processing Systems},
+  year={2025}
+}
+```
+
 ```
 @inproceedings{
 	zhong2024towards,

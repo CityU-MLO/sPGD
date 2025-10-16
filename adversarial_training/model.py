@@ -583,17 +583,74 @@ class PreActResNet(nn.Module):
         out = F.relu(self.bn(out))
         if return_features:
             return out.view(out.size(0), -1)
-        out = F.adaptive_avg_pool2d(out, 1)
+        out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
+
         return out
 
 
 def PreActResNet18(num_classes, cuda=True, half_prec=False, activation='softplus1', fts_before_bn=False,
-    normal='none'):
+    normal='none', channel=3):
     #print('initializing PA RN-18 with act {}, normal {}'.format())
     return PreActResNet(PreActBlock, [2, 2, 2, 2], num_classes=num_classes, cuda=cuda, half_prec=half_prec,
         activation=activation, fts_before_bn=fts_before_bn, normal=normal)
+
+
+
+''' VGG '''
+cfg_vgg = {
+    'VGG11': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+}
+
+
+class VGG(nn.Module):
+    def __init__(self, vgg_name, channel, num_classes, norm='batchnorm', im_size=(32, 32)):
+        super(VGG, self).__init__()
+        self.channel = channel
+        self.features = self._make_layers(cfg_vgg[vgg_name], norm)
+        self.classifier = nn.Linear(512*im_size[0]//32*im_size[1]//32 if vgg_name != 'VGGS' else 128*im_size[1]//32*im_size[1]//32, num_classes)
+
+    def forward(self, x, output_feat=False):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        if output_feat:
+            return x
+        x = self.classifier(x)
+        return x
+
+    def _make_layers(self, cfg, norm):
+        layers = []
+        in_channels = self.channel
+        for ic, x in enumerate(cfg):
+            if x == 'M':
+                layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+            else:
+                layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=3 if self.channel == 1 and ic == 0 else 1),
+                           nn.GroupNorm(x, x, affine=True) if norm == 'instancenorm' else nn.BatchNorm2d(x),
+                           nn.ReLU(inplace=True)]
+                in_channels = x
+        layers += [nn.AvgPool2d(kernel_size=1, stride=1)]
+        return nn.Sequential(*layers)
+
+
+def VGG11(num_classes, channel=3):
+    return VGG('VGG11', channel=channel, num_classes=num_classes)
+
+
+def VGG13(num_classes, channel=3):
+    return VGG('VGG13', channel=channel, num_classes=num_classes)
+
+
+def VGG16(num_classes, channel=3):
+    return VGG('VGG16', channel=channel, num_classes=num_classes)
+
+
+def VGG19(num_classes, channel=3):
+    return VGG('VGG19', channel=channel, num_classes=num_classes)
 
 
 
@@ -613,7 +670,8 @@ __factory = {
     'convnet': ConvNet,
     'convnetfrepo': ConvNetFRePo,
     'preactresnet': PreActResNet18,
-    'lenet': LeNet
+    'lenet': LeNet,
+    'vgg': VGG11
 }
 
 
