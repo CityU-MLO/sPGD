@@ -1,8 +1,9 @@
 # Sparse-PGD
 
 This is the code repository for papers
-- Understanding and Improving Fast Adversarial Training against $l_0$ Bounded Perturbations, NeurIPS 2025.
-- [Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations](https://arxiv.org/abs/2405.05075), ICML 2024.
+- [Sparse-PGD: A Unified Framework for Sparse Adversarial Perturbations Generation ](https://arxiv.org/abs/2405.05075), TPAMI 2025.
+- [Understanding and Improving Fast Adversarial Training against $l_0$ Bounded Perturbations](https://openreview.net/forum?id=YOv9CANvDv), NeurIPS 2025.
+- [Towards Efficient Training and Evaluation of Robust Models against $l_0$ Bounded Adversarial Perturbations](https://openreview.net/forum?id=2bUFIsg2f5), ICML 2024.
 
 ## Requirements
 
@@ -12,6 +13,10 @@ To execute the code, please make sure that the following packages are installed:
 - [PyTorch and Torchvision](https://pytorch.org/) (install with CUDA if available)
 - [matplotlib](https://matplotlib.org/users/installing.html)
 - [robustbench](https://github.com/RobustBench/robustbench)
+
+## Structured Sparse Perturbation
+
+To generate structured sparse perturbations, please check class **StructureSparsePGD** in [autoattack/spgd.py](autoattack/spgd.py) and [adversarial_training/spgd.py](adversarial_training/spgd.py)
 
 ## Fast-LS-$l_0$
 
